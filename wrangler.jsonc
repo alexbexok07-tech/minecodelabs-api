@@ -2,5 +2,12 @@
   "name": "minecodelabs-api",
   "main": "index.js",
   "compatibility_date": "2026-08-21",
-  "d1_databases": [{"binding":"DB","database_name":"minecodelabs-api","database_id":"REPLACE_WITH_YOUR_D1_DATABASE_ID"}]
+
+  "d1_databases": [
+    {
+      "binding": "DB",
+      "database_name": "minecodelabs-api",
+      "database_id": "cf2ef7f6-a574-45ad-a838-739e85b5e5d9"
+    }
+  ]
 }
