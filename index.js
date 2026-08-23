@@ -1,4 +1,4 @@
-const MODELS=['openai/gpt-oss-20b','openai/gpt-oss-120b','llama-3.3-70b-versatile'];
+const MODELS=['openai/gpt-oss-20b','openai/gpt-oss-120b','groq/compound','groq/compound-mini','openai/gpt-oss-safeguard-20b','qwen/qwen3.6-27b'];
 const json=(data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
 const fail=(status,code,message,extra={})=>json({success:false,error:{code,message,...extra}},status);
 const sha256=async s=>{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')};
@@ -14,7 +14,7 @@ return {ok:false,used:0,remaining:0};}
 async function release(env,id,b,res){await env.DB.prepare('UPDATE mcl_api_usage SET reserved_tokens=MAX(0,reserved_tokens-?) WHERE key_id=? AND bucket_start=?').bind(res,id,b).run()}
 async function finalize(env,id,b,res,actual){await env.DB.batch([env.DB.prepare('UPDATE mcl_api_usage SET reserved_tokens=MAX(0,reserved_tokens-?), used_tokens=used_tokens+?, request_count=request_count+1 WHERE key_id=? AND bucket_start=?').bind(res,actual,id,b),env.DB.prepare('UPDATE mcl_api_keys SET last_used_at=? WHERE id=?').bind(now(),id)])}
 async function state(env,k){const u=await usage(env,k.id,bucket()),limit=Number(k.rate_limit_tpm);return {limit,used:Number(u.used_tokens),remaining:Math.max(0,limit-Number(u.used_tokens)-Number(u.reserved_tokens)),reserved:Number(u.reserved_tokens),reset_in:resetIn()}}
-function cleanModel(m){if(m==='gpt-oss-20b')return 'openai/gpt-oss-20b';if(m==='gpt-oss-120b')return 'openai/gpt-oss-120b';return m}
+function cleanModel(m){if(m==='gpt-oss-20b')return 'openai/gpt-oss-20b';if(m==='gpt-oss-120b')return 'openai/gpt-oss-120b';if(m==='compound')return 'groq/compound';if(m==='compound-mini')return 'groq/compound-mini';if(m==='gpt-oss-safeguard-20b')return 'openai/gpt-oss-safeguard-20b';if(m==='qwen3.6-27b')return 'qwen/qwen3.6-27b';return m}
 async function text(request,env){if(!env.MCL_GROQ_API_KEY)return fail(503,'AI_CONFIGURATION_ERROR','MineCodeLabs AI is not configured yet.');
 const raw=authKey(request);if(!raw)return fail(401,'MISSING_API_KEY','Provide your MineCodeLabs API key as a Bearer token or ?key=.');
 const key=await keyRow(env,raw);if(!key)return fail(401,'INVALID_API_KEY','The API key is invalid or has been revoked.');if(key.revoked_at)return fail(401,'KEY_REVOKED','This API key has been revoked.');if(key.expires_at&&Date.parse(key.expires_at+'Z')<=Date.now())return fail(401,'KEY_EXPIRED','This API key has expired.');
