@@ -116,6 +116,8 @@ sync integration.
 
 ## 6. Test
 
+Before migrating, test the protected admin/D1 health endpoint with the website diagnostic page at `/developers/api/worker_diagnostic.php`. It should return HTTP 200 and `database: connected`. The endpoint is `POST /_mcl_admin/health` and requires the matching `MCL_ADMIN_SECRET`.
+
 A request to the Worker root without an API key should return `MISSING_API_KEY`.
 Then send a normal API request:
 
