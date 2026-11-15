@@ -1,0 +1,30 @@
+MINECODELABS DUAL GROQ KEY SETUP
+================================
+
+The Worker source code supports two Groq credentials. It does NOT contain the
+secret values. Add them through Cloudflare Worker Secrets.
+
+Cloudflare Dashboard:
+Workers & Pages -> api -> Settings -> Variables and Secrets -> Add -> Secret
+
+Create:
+  MCL_GROQ_API_KEY    = primary Groq key
+  MCL_GROQ_API_KEY_2  = secondary Groq key (different organisation)
+  MCL_ADMIN_SECRET   = random secret shared with website mcl_api_config.php
+
+Where the previous values appeared in the ORIGINAL htdocs.zip:
+  mcl_api_config.php
+    MCL_GROQ_API_KEY definition (Developer API's previous Groq key)
+
+  plugins/ai-scanner/config.php
+    groq_api_key entry (AI Scanner's separate Groq key)
+
+IMPORTANT SECURITY NOTE:
+Those old values were included in an uploaded archive. Treat them as exposed
+and rotate them. Prefer creating fresh keys in the two separate Groq
+organisations, then paste the new values into the two Cloudflare secrets.
+Do not put secrets in index.js, wrangler.jsonc, GitHub, or browser code.
+
+The AI Scanner key may be dedicated to the scanner and may not be appropriate
+for the public Developer API. Confirm ownership/permission and model access
+before assigning it as the secondary key.
