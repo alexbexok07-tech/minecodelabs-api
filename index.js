@@ -1,5 +1,5 @@
 const MODELS=['openai/gpt-oss-20b','openai/gpt-oss-120b','groq/compound','groq/compound-mini','openai/gpt-oss-safeguard-20b','qwen/qwen3.6-27b'];
-const json=(data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store',...headers}});
+const json=(data,status=200,headers={})=>new Response(JSON.stringify(data),{status,headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store','access-control-allow-origin':'*',...headers}});
 const fail=(status,code,message,extra={})=>json({success:false,error:{code,message,...extra}},status);
 const sha256=async s=>{const b=await crypto.subtle.digest('SHA-256',new TextEncoder().encode(s));return [...new Uint8Array(b)].map(x=>x.toString(16).padStart(2,'0')).join('')};
 const now=()=>new Date().toISOString().replace('T',' ').replace(/\.\d{3}Z$/,'');
