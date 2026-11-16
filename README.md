@@ -1,137 +1,76 @@
-# MineCodeLabs API — Cloudflare Worker (dual Groq-key failover)
+# MineCodeLabs Cloudflare Worker — release 1.3.0
 
-Worker URL: `https://api.mclab.workers.dev`
+This folder contains the matching Cloudflare Worker source for the website bundle. It updates the live `/api/text` route, the `/_mcl_admin/*` key-sync routes, and D1 usage accounting for the expanded API-key TPM controls.
 
-## Dual-key failover
+## What changed
 
-The Worker supports two independent Groq API keys:
+- Fixed keys keep one shared per-key minute bucket and accept the configured TPM value up to 8,000. Existing lower-limit keys (including old 500 TPM keys) remain valid.
+- `Max As Per Model` keys use separate D1 minute buckets for each model. Requests on one model do not consume another model's quota.
+- The Worker validates stored model limits against the MineCodeLabs ceilings below and fails closed when a model limit is missing or malformed.
+- Reservations use a conditional SQLite upsert before the provider request, preventing concurrent requests from reserving beyond the active bucket's remaining TPM.
+- The admin create/update routes sync `rate_limit_mode` and `model_rate_limits_json` into D1.
+- `/_mcl_admin/list` returns live per-model usage for the key manager, and `/_mcl_admin/health` checks the D1 schema.
 
-- `MCL_GROQ_API_KEY` — primary key
-- `MCL_GROQ_API_KEY_2` — secondary key
+## MineCodeLabs per-model ceilings
 
-The Worker tries the primary first. It tries the secondary only after a retryable provider failure:
-- HTTP 401 / 403 (credential or permission failure)
-- HTTP 429 (provider rate limit)
-- HTTP 5xx (provider/server failure)
-- Network/fetch failure
+| Model ID | Maximum TPM |
+|---|---:|
+| `openai/gpt-oss-20b` | 7,000 |
+| `openai/gpt-oss-120b` | 6,800 |
+| `groq/compound` | 64,000 |
+| `groq/compound-mini` | 68,000 |
+| `openai/gpt-oss-safeguard-20b` | 6,980 |
+| `qwen/qwen3.6-27b` | 6,880 |
 
-It does **not** retry HTTP 400 or 404: those normally indicate an invalid request or unavailable model, which a second credential cannot fix.
+These values are MineCodeLabs API-key ceilings, not Groq organization-level limits and not the per-response `max_tokens` setting. `max_tokens` remains a separate response setting, clamped by the existing API to 1–1,024.
 
-On success, the API response keeps the existing shape and includes `failover_used: true|false`. API users do not need to change their requests.
+## Upgrade an existing Worker
 
-The Worker never returns or logs either key. Keep both values in Cloudflare Worker Secrets, never in GitHub, `index.js`, `wrangler.jsonc`, PHP, or browser code. Using two keys from different Groq organisations may reduce shared-organisation quota contention, but provider/model-level limits can still apply.
+1. Back up/export the existing Cloudflare D1 database.
+2. From the existing Worker project, run the D1 migration against the same remote database configured by your existing `DB` binding:
 
-## 1. D1 database
+   ```bash
+   npx wrangler d1 execute YOUR_EXISTING_D1_DATABASE_NAME --remote --file=worker-upgrade/D1-migration.sql
+   ```
 
-`wrangler.jsonc` binds D1 as `DB` and references database ID
-`cf2ef7f6-a574-45ad-a838-739e85b5e5d9`. Confirm that this database exists in the
-Cloudflare account you deploy from. If the ID is not yours, create/select the
-correct `minecodelabs-api` database and update `database_id`.
+   Run this migration **once only** on the existing database. Do not run it if you have already applied the two column additions and created `mcl_api_model_usage`.
+3. Replace the Worker entrypoint configured in your existing `wrangler.jsonc` with the included `index.js`. Keep your existing `wrangler.jsonc`, account/database identifiers, routes, and D1 binding unchanged; the binding name must remain `DB`.
+4. Preserve the existing Worker secrets. Required secrets are `MCL_ADMIN_SECRET` and `MCL_GROQ_API_KEY` (plus any other secrets your deployment already uses). Do not put secret values in this ZIP or commit them to source control.
+5. Deploy from the existing Worker project directory:
 
-Apply `schema.sql` to the intended remote database:
+   ```bash
+   npx wrangler deploy
+   ```
+6. Verify the Worker and upgraded D1 schema. The health endpoint is admin-protected:
 
-```bash
-npx wrangler d1 execute minecodelabs-api --remote --file=./schema.sql
-```
+   ```bash
+   curl -X POST "https://api.mclab.workers.dev/_mcl_admin/health" \
+     -H "Authorization: Bearer $MCL_ADMIN_SECRET" \
+     -H "Content-Type: application/json" \
+     -d '{}'
+   ```
 
-Do not create a duplicate database if the configured one already holds your
-production API key records.
+   A successful result contains `"success":true` and `"database_connected":true`.
+7. Upload the updated website `developers/` directory. The PHP key manager automatically adds the required MySQL columns and table. Keep `db_config.php` and `mcl_api_config.php` outside the uploaded archive.
+8. Open the API key manager and create a new test key. Test both a fixed key and a `Max As Per Model` key using the documented `/api/text` endpoint.
 
-## 2. Add Worker secrets
+For a brand-new D1 database, use `schema.sql` instead of `D1-migration.sql`.
 
-Cloudflare Dashboard → Workers & Pages → `api` → Settings → Variables and Secrets
-→ Add → Secret.
+## Compatibility
 
-Create these three secrets:
+- Existing D1 key rows receive `rate_limit_mode = 'fixed'` from the migration default. Existing key hashes, IDs, expiry, revoke state and usage rows are preserved.
+- Fixed keys continue to use `mcl_api_usage`; per-model keys use `mcl_api_model_usage`.
+- The six model IDs and the public text endpoint remain unchanged.
+- The Worker does not increase Groq's upstream organization limits. Groq may still return its own provider rate-limit error even when a MineCodeLabs key has quota remaining.
 
-| Secret name | Value |
-|---|---|
-| `MCL_GROQ_API_KEY` | Primary Groq API key (organisation 1) |
-| `MCL_GROQ_API_KEY_2` | Secondary Groq API key (different organisation) |
-| `MCL_ADMIN_SECRET` | Long random secret shared only with the PHP website |
+## Local checks
 
-You can also add them using Wrangler from this repository directory:
-
-```bash
-npx wrangler secret put MCL_GROQ_API_KEY
-npx wrangler secret put MCL_GROQ_API_KEY_2
-npx wrangler secret put MCL_ADMIN_SECRET
-```
-
-For the admin secret, generate a random value (for example `openssl rand -hex 32`)
-and put exactly the same value in the website's private `mcl_api_config.php`.
-
-### Finding the previous Groq key values in the original website archive
-
-In the **original `htdocs.zip` supplied before the Cloudflare update**:
-- The Developer API's former Groq key was in root `mcl_api_config.php`, on the
-  `MCL_GROQ_API_KEY` definition.
-- The AI Scanner's separate Groq key was in `plugins/ai-scanner/config.php`,
-  on the `groq_api_key` entry.
-
-These were different application configurations. Do not assume the AI Scanner
-key is still valid or suitable as the Developer API's secondary key. The old
-credentials were included in an uploaded archive; treat them as exposed. Create
-new keys in the two respective Groq organisations and use those newly generated
-values for the Cloudflare secrets. Do not commit either value to this repository.
-
-## 3. Deploy
+From the Developer Hub root:
 
 ```bash
-npm install
-npx wrangler deploy
+node --check worker-upgrade/index.js
+node --test worker-upgrade/test/*.test.mjs
+npm test
 ```
 
-If GitHub auto-deploy is configured, push/commit the repository contents and
-wait for the deployment to complete. Confirm Worker name `api` and account
-Workers subdomain `mclab`.
-
-## 4. Website configuration
-
-In the website document root, edit private `mcl_api_config.php`:
-
-```php
-<?php
-define('MCL_WORKER_URL', 'https://api.mclab.workers.dev');
-define('MCL_ADMIN_SECRET', 'PASTE_THE_EXACT_SAME_RANDOM_SECRET_HERE');
-define('MCL_GROQ_API_KEY', '');
-```
-
-The PHP site does not need either Groq key for the Worker-backed Developer API.
-Do not put `MCL_GROQ_API_KEY_2` in PHP. The two Groq credentials belong only in
-Cloudflare Worker Secrets. Keep `mcl_api_config.php` private and out of GitHub.
-
-## 5. Migrate existing API keys
-
-After the Worker, D1 schema, and matching admin secret are configured, run the
-one-time migration endpoint:
-
-`https://YOUR-WEBSITE-HOST/developers/api/migrate_to_worker.php?secret=YOUR_MCL_ADMIN_SECRET`
-
-Confirm every key and usage row reports success, then delete
-`developers/api/migrate_to_worker.php` from the live website.
-
-New key creation, revocation, and rate-limit changes use the existing website
-sync integration.
-
-## 6. Test
-
-Before migrating, test the protected admin/D1 health endpoint with the website diagnostic page at `/developers/api/worker_diagnostic.php`. It should return HTTP 200 and `database: connected`. The endpoint is `POST /_mcl_admin/health` and requires the matching `MCL_ADMIN_SECRET`.
-
-A request to the Worker root without an API key should return `MISSING_API_KEY`.
-Then send a normal API request:
-
-```bash
-curl -X POST "https://api.mclab.workers.dev/api/text" \
-  -H "Authorization: Bearer mcl_live_YOUR_API_KEY" \
-  -H "Content-Type: application/json" \
-  -d '{"prompt":"hello","model":"openai/gpt-oss-20b","max_tokens":150}'
-```
-
-A successful response contains `success: true`, `response`, `usage`,
-`rate_limit`, and `failover_used`.
-
-To test failover safely, temporarily set the primary secret to an invalid
-test value, deploy/restart the Worker as required, and make a test request while
-the secondary secret is valid. Restore the primary secret immediately after
-testing. Do not intentionally overload either organisation's quota.
+The local tests exercise the D1 SQL against SQLite and check the per-model quota isolation. They do not replace a live Cloudflare deployment test.
