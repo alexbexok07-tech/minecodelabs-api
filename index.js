@@ -1,21 +1,45 @@
-const MODELS = [
-  'openai/gpt-oss-20b',
-  'openai/gpt-oss-120b',
+// Public model namespace. Upstream identifiers stay server-side and are never
+// required in customer requests or SDK configuration.
+export const UPSTREAM_MODEL_BY_PUBLIC_ID = Object.freeze({
+  'mclai/gpt-oss-20b': 'openai/gpt-oss-20b',
+  'mclai/gpt-oss-120b': 'openai/gpt-oss-120b',
+  'mclai/gpt-oss-safeguard-20b': 'openai/gpt-oss-safeguard-20b',
+  'mclai/qwen3.8-27b': 'qwen/qwen3.8-27b',
+});
+
+const MODELS = Object.keys(UPSTREAM_MODEL_BY_PUBLIC_ID);
+
+// MineCodeLabs per-key ceilings. These are product-level TPM policies, not
+// the upstream inference account's organization limits.
+export const MODEL_MAX_TPM = Object.freeze({
+  'mclai/gpt-oss-20b': 7000,
+  'mclai/gpt-oss-120b': 6800,
+  'mclai/gpt-oss-safeguard-20b': 6980,
+  'mclai/qwen3.8-27b': 6880,
+});
+
+const LEGACY_MODEL_ALIASES = Object.freeze({
+  'gpt-oss-20b': 'mclai/gpt-oss-20b',
+  'openai/gpt-oss-20b': 'mclai/gpt-oss-20b',
+  'gpt-oss-120b': 'mclai/gpt-oss-120b',
+  'openai/gpt-oss-120b': 'mclai/gpt-oss-120b',
+  'gpt-oss-safeguard-20b': 'mclai/gpt-oss-safeguard-20b',
+  'openai/gpt-oss-safeguard-20b': 'mclai/gpt-oss-safeguard-20b',
+  'qwen3.8-27b': 'mclai/qwen3.8-27b',
+  'qwen/qwen3.8-27b': 'mclai/qwen3.8-27b',
+  // Backward compatibility for the model's retired predecessor.
+  'qwen3.6-27b': 'mclai/qwen3.8-27b',
+  'qwen/qwen3.6-27b': 'mclai/qwen3.8-27b',
+});
+
+const RETIRED_MODEL_IDS = new Set([
   'groq/compound',
   'groq/compound-mini',
-  'openai/gpt-oss-safeguard-20b',
-  'qwen/qwen3.6-27b',
-];
-
-// MineCodeLabs per-key ceilings. These are not Groq organization rate limits.
-export const MODEL_MAX_TPM = Object.freeze({
-  'openai/gpt-oss-20b': 7000,
-  'openai/gpt-oss-120b': 6800,
-  'groq/compound': 64000,
-  'groq/compound-mini': 68000,
-  'openai/gpt-oss-safeguard-20b': 6980,
-  'qwen/qwen3.6-27b': 6880,
-});
+  'mclai/compound',
+  'mclai/compound-mini',
+  'compound',
+  'compound-mini',
+]);
 
 const json = (data, status = 200, headers = {}) => new Response(JSON.stringify(data), {
   status,
@@ -52,16 +76,52 @@ function isAdmin(request, env) {
   return Boolean(env.MCL_ADMIN_SECRET && token && token === env.MCL_ADMIN_SECRET);
 }
 
-function normalizeModel(model) {
-  const aliases = {
-    'gpt-oss-20b': 'openai/gpt-oss-20b',
-    'gpt-oss-120b': 'openai/gpt-oss-120b',
-    'compound': 'groq/compound',
-    'compound-mini': 'groq/compound-mini',
-    'gpt-oss-safeguard-20b': 'openai/gpt-oss-safeguard-20b',
-    'qwen3.6-27b': 'qwen/qwen3.6-27b',
-  };
-  return aliases[model] || model;
+export function normalizeModel(model) {
+  const value = String(model || '').trim();
+  return LEGACY_MODEL_ALIASES[value] || value;
+}
+
+export function upstreamModelForModel(model) {
+  return UPSTREAM_MODEL_BY_PUBLIC_ID[normalizeModel(model)] || null;
+}
+
+export function isRetiredModel(model) {
+  return RETIRED_MODEL_IDS.has(String(model || '').trim());
+}
+
+export async function requestWithInferenceKeys(env, payload) {
+  const keys = [...new Set([
+    env.MCL_INFERENCE_API_KEY,
+    env.MCL_GROQ_API_KEY,       // Existing deployment secret name; retained for compatibility.
+    env.MCL_GROQ_API_KEY_2,     // Optional secondary key from the previous deployment.
+  ].filter((value) => typeof value === 'string' && value.trim()))];
+  if (!keys.length) return { response: null, networkError: true };
+
+  let lastResponse = null;
+  let networkError = null;
+  for (let i = 0; i < keys.length; i += 1) {
+    try {
+      const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${keys[i]}`,
+          'content-type': 'application/json',
+          accept: 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+      lastResponse = response;
+      const retryable = [401, 403, 429, 500, 502, 503, 504].includes(response.status);
+      if (response.ok || !retryable || i === keys.length - 1) {
+        return { response, networkError: null };
+      }
+      try { await response.body?.cancel(); } catch { /* best effort */ }
+    } catch (error) {
+      networkError = error;
+      if (i === keys.length - 1) return { response: null, networkError };
+    }
+  }
+  return { response: lastResponse, networkError };
 }
 
 export function parseModelLimits(value) {
@@ -72,16 +132,20 @@ export function parseModelLimits(value) {
   if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
 
   const limits = {};
-  for (const [model, rawLimit] of Object.entries(parsed)) {
+  for (const [storedModel, rawLimit] of Object.entries(parsed)) {
+    if (isRetiredModel(storedModel)) continue;
+    const model = normalizeModel(storedModel);
     const ceiling = MODEL_MAX_TPM[model];
     const limit = Number(rawLimit);
     if (!ceiling || !Number.isSafeInteger(limit) || limit < 1 || limit > ceiling) return null;
-    limits[model] = limit;
+    if (Object.hasOwn(limits, model)) limits[model] = Math.min(limits[model], limit);
+    else limits[model] = limit;
   }
   return Object.keys(limits).length ? limits : null;
 }
 
 export function keyLimitForModel(key, model) {
+  model = normalizeModel(model);
   if ((key.rate_limit_mode || 'fixed') !== 'per_model') {
     const limit = Number(key.rate_limit_tpm);
     return Number.isSafeInteger(limit) && limit > 0 ? limit : 0;
@@ -217,7 +281,7 @@ async function rateLimitState(env, key, model, bucketStart) {
 }
 
 async function text(request, env) {
-  if (!env.DB || !env.MCL_GROQ_API_KEY) {
+  if (!env.DB || !(env.MCL_INFERENCE_API_KEY || env.MCL_GROQ_API_KEY || env.MCL_GROQ_API_KEY_2)) {
     return fail(503, 'AI_CONFIGURATION_ERROR', 'MineCodeLabs AI is not configured yet.');
   }
 
@@ -260,7 +324,11 @@ async function text(request, env) {
   }
 
   prompt = prompt.trim();
-  model = normalizeModel(model.trim() || 'openai/gpt-oss-20b');
+  const requestedModel = model.trim() || 'mclai/gpt-oss-20b';
+  if (isRetiredModel(requestedModel)) {
+    return fail(410, 'MODEL_RETIRED', 'This model is no longer available. Select one of the currently supported MineCodeLabs models.', { available_models: MODELS });
+  }
+  model = normalizeModel(requestedModel);
   if (!prompt) return fail(400, 'INVALID_PROMPT', 'A prompt is required.');
   if (prompt.length > 20000) return fail(413, 'PROMPT_TOO_LARGE', 'The prompt is too large for this endpoint.');
   if (!MODELS.includes(model)) {
@@ -297,22 +365,22 @@ async function text(request, env) {
     });
   }
 
+  const upstreamModel = upstreamModelForModel(model);
+  if (!upstreamModel) {
+    await releaseUsage(env, key.id, bucketStart, reservation, perModel ? model : null);
+    return fail(400, 'INVALID_MODEL', 'That model is not available through the MineCodeLabs API.', { available_models: MODELS });
+  }
+
   let providerResponse;
   try {
-    providerResponse = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-      method: 'POST',
-      headers: {
-        authorization: `Bearer ${env.MCL_GROQ_API_KEY}`,
-        'content-type': 'application/json',
-        accept: 'application/json',
-      },
-      body: JSON.stringify({
-        model,
-        messages: [{ role: 'user', content: prompt }],
-        max_tokens: maxTokens,
-        ...(temperature !== null ? { temperature } : {}),
-      }),
+    const result = await requestWithInferenceKeys(env, {
+      model: upstreamModel,
+      messages: [{ role: 'user', content: prompt }],
+      max_tokens: maxTokens,
+      ...(temperature !== null ? { temperature } : {}),
     });
+    providerResponse = result.response;
+    if (!providerResponse) throw result.networkError || new Error('No inference response');
   } catch {
     await releaseUsage(env, key.id, bucketStart, reservation, perModel ? model : null);
     return fail(502, 'AI_PROVIDER_UNAVAILABLE', 'MineCodeLabs AI is temporarily unavailable. Please try again later.');
@@ -328,13 +396,13 @@ async function text(request, env) {
     await releaseUsage(env, key.id, bucketStart, reservation, perModel ? model : null);
     const message = String(provider?.error?.message || '').toLowerCase();
     if (providerResponse.status === 429 || message.includes('rate limit') || message.includes('rate_limit')) {
-      return fail(502, 'AI_PROVIDER_RATE_LIMITED', 'MineCodeLabs AI is temporarily rate-limited by its AI provider. Please try again later.', {
+      return fail(502, 'AI_PROVIDER_RATE_LIMITED', 'MineCodeLabs AI is temporarily busy. Please try again later.', {
         provider_status: 429,
         retry_after: provider?.error?.retry_after ?? null,
       });
     }
     if (providerResponse.status === 401 || providerResponse.status === 403) {
-      return fail(502, 'AI_CONFIGURATION_ERROR', 'MineCodeLabs could not authenticate with its AI provider.');
+      return fail(502, 'AI_CONFIGURATION_ERROR', 'MineCodeLabs AI could not authenticate its inference request.');
     }
     if (providerResponse.status === 400) {
       return fail(400, 'AI_REQUEST_REJECTED', 'MineCodeLabs AI could not process this request.', {
@@ -470,7 +538,7 @@ async function admin(request, env) {
           missing_columns: missingColumns,
         });
       }
-      return json({ success: true, database_connected: true, schema_version: '1.3.0' });
+      return json({ success: true, database_connected: true, schema_version: '1.4.0' });
     } catch {
       return fail(503, 'D1_UNAVAILABLE', 'The Worker could not query its D1 database.');
     }

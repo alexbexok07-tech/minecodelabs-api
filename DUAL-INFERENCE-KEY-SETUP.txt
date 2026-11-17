@@ -1,0 +1,19 @@
+MineCodeLabs inference-key failover
+====================================
+
+The Worker supports a primary and optional secondary inference credential.
+Existing deployed secret names remain supported so an existing deployment does
+not need to re-enter or rename its credentials:
+
+  MCL_GROQ_API_KEY      existing primary secret
+  MCL_GROQ_API_KEY_2    optional secondary secret
+  MCL_INFERENCE_API_KEY optional future generic primary secret
+  MCL_ADMIN_SECRET      unchanged admin/synchronization secret
+
+Do not commit secret values. Configure secrets in the Cloudflare Worker settings
+or with Wrangler secrets. The Worker will use MCL_INFERENCE_API_KEY first, then
+fall back to the existing primary and secondary names. On retryable auth,
+rate-limit, network, and server errors it will attempt the next configured key.
+
+Public request IDs use the MineCodeLabs namespace (mclai/*). Upstream model IDs
+are mapped inside the Worker, not supplied by SDK users.
