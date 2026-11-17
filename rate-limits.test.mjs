@@ -76,6 +76,8 @@ test('per-model limits parse safely and match the MineCodeLabs public catalog', 
     'mclai/gpt-oss-120b',
     'mclai/gpt-oss-safeguard-20b',
     'mclai/qwen3.8-27b',
+    'mclai/minimax-m2.7',
+    'mclai/muse-spark-open',
   ]);
   const limits = parseModelLimits(JSON.stringify(MODEL_MAX_TPM));
   assert.deepEqual(limits, MODEL_MAX_TPM);
@@ -170,6 +172,10 @@ test('public model aliases map to their configured upstream IDs', () => {
   assert.equal(upstreamModelForModel('mclai/gpt-oss-120b'), 'openai/gpt-oss-120b');
   assert.equal(upstreamModelForModel('mclai/gpt-oss-safeguard-20b'), 'openai/gpt-oss-safeguard-20b');
   assert.equal(upstreamModelForModel('mclai/qwen3.8-27b'), 'qwen/qwen3.8-27b');
+  assert.equal(upstreamModelForModel('mclai/minimax-m2.7'), 'minimaxai/minimax-m2.7');
+  assert.equal(upstreamModelForModel('mclai/muse-spark-open'), 'meta-models/muse-spark-open');
+  assert.equal(normalizeModel('minimaxai/minimax-m2.7'), 'mclai/minimax-m2.7');
+  assert.equal(normalizeModel('meta-models/muse-spark-open'), 'mclai/muse-spark-open');
   assert.equal(normalizeModel('openai/gpt-oss-20b'), 'mclai/gpt-oss-20b');
   assert.equal(normalizeModel('qwen/qwen3.6-27b'), 'mclai/qwen3.8-27b');
   assert.equal(upstreamModelForModel('groq/compound'), null);

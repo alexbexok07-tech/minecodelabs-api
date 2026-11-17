@@ -28,6 +28,8 @@ Authorization: `Bearer mcl_live_...`
 | `mclai/gpt-oss-120b` | 6,800 TPM |
 | `mclai/gpt-oss-safeguard-20b` | 6,980 TPM |
 | `mclai/qwen3.8-27b` | 6,880 TPM |
+| `mclai/minimax-m2.7` | 7,000 TPM (MCL cap; Groq enterprise access) |
+| `mclai/muse-spark-open` | 7,000 TPM (MCL cap; Groq enterprise access) |
 
 See [MODEL-CATALOG.md](MODEL-CATALOG.md) for routing and compatibility details.
 
@@ -52,8 +54,10 @@ underlying accelerator hardware is MineCodeLabs-owned.
 ## Compatibility
 
 Old active public IDs are normalized to the corresponding `mclai/*` ID.
-`qwen/qwen3.6-27b` normalizes to `mclai/qwen3.8-27b`. Retired Compound IDs
-return `410 MODEL_RETIRED`, because their upstream service has been shut down.
+`qwen/qwen3.6-27b` normalizes to `mclai/qwen3.8-27b`. MiniMax M2.7 and Muse
+Spark Open are enterprise preview models on Groq; their upstream rate quotas
+are account-specific and not published as public TPM values. Retired Compound
+IDs return `410 MODEL_RETIRED`, because their upstream service has been shut down.
 
 ## Tests
 

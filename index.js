@@ -5,6 +5,8 @@ export const UPSTREAM_MODEL_BY_PUBLIC_ID = Object.freeze({
   'mclai/gpt-oss-120b': 'openai/gpt-oss-120b',
   'mclai/gpt-oss-safeguard-20b': 'openai/gpt-oss-safeguard-20b',
   'mclai/qwen3.8-27b': 'qwen/qwen3.8-27b',
+  'mclai/minimax-m2.7': 'minimaxai/minimax-m2.7',
+  'mclai/muse-spark-open': 'meta-models/muse-spark-open',
 });
 
 const MODELS = Object.keys(UPSTREAM_MODEL_BY_PUBLIC_ID);
@@ -16,6 +18,8 @@ export const MODEL_MAX_TPM = Object.freeze({
   'mclai/gpt-oss-120b': 6800,
   'mclai/gpt-oss-safeguard-20b': 6980,
   'mclai/qwen3.8-27b': 6880,
+  'mclai/minimax-m2.7': 7000,
+  'mclai/muse-spark-open': 7000,
 });
 
 const LEGACY_MODEL_ALIASES = Object.freeze({
@@ -27,6 +31,10 @@ const LEGACY_MODEL_ALIASES = Object.freeze({
   'openai/gpt-oss-safeguard-20b': 'mclai/gpt-oss-safeguard-20b',
   'qwen3.8-27b': 'mclai/qwen3.8-27b',
   'qwen/qwen3.8-27b': 'mclai/qwen3.8-27b',
+  'minimax-m2.7': 'mclai/minimax-m2.7',
+  'minimaxai/minimax-m2.7': 'mclai/minimax-m2.7',
+  'muse-spark-open': 'mclai/muse-spark-open',
+  'meta-models/muse-spark-open': 'mclai/muse-spark-open',
   // Backward compatibility for the model's retired predecessor.
   'qwen3.6-27b': 'mclai/qwen3.8-27b',
   'qwen/qwen3.6-27b': 'mclai/qwen3.8-27b',
